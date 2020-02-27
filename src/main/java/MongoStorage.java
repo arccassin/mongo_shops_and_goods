@@ -5,6 +5,7 @@ import com.mongodb.client.FindIterable;
 import com.mongodb.client.MongoCollection;
 import com.mongodb.client.MongoCursor;
 import com.mongodb.client.MongoDatabase;
+import com.mongodb.client.model.Facet;
 import com.mongodb.client.model.Updates;
 import org.bson.Document;
 import org.bson.conversions.Bson;
@@ -19,7 +20,6 @@ import org.bson.json.JsonWriterSettings;
 
 import static com.mongodb.client.model.Accumulators.*;
 import static com.mongodb.client.model.Aggregates.*;
-import static com.mongodb.client.model.Aggregates.group;
 import static com.mongodb.client.model.Filters.*;
 import static com.mongodb.client.model.Projections.*;
 import static com.mongodb.client.model.Sorts.descending;
@@ -102,7 +102,70 @@ public class MongoStorage implements Closeable {
             System.out.println(cursor.next().toJson());
         }
     }
-    
+
+    //все по магазинам
+    private void getAllStaticFacet() {
+        Bson lookup = lookup("goods", "goods_in_store", "name", "fromGood");
+        Bson unwind = unwind("$fromGood");
+        Bson sort = sort(descending("fromGood.price"));
+        Bson group = group("$name",
+                sum("count", 1L),
+                avg("averagePrice", "$fromGood.price"),
+                last("minPriceGood", "$fromGood"),
+                first("maxPriceGood", "$fromGood"));
+
+        Bson match = match(lt("fromGood.price", 100L));
+        Bson matchGroup = group("$name", sum("matchCount", 1L));
+        Bson faset1 = facet(
+                new Facet("shopInfo", lookup, unwind, sort, group),
+                new Facet("under100", lookup, unwind, match, matchGroup)
+        );
+        List<Document> allResults = shopsCollection.aggregate(Arrays.asList(faset1)).into(new ArrayList<>());
+
+        Document res = allResults.get(0);
+        ArrayList<Document> shopInfoDoc = (ArrayList<Document>) res.get("shopInfo");
+        ArrayList<Document> under100Doc = (ArrayList<Document>) res.get("under100");
+
+        StringBuilder builder = new StringBuilder();
+        shopInfoDoc.forEach(doc -> {
+            String shopName = (String) doc.get("_id");
+            builder.append("\n\nМагазин \"");
+            builder.append(shopName);
+            builder.append("\"");
+            builder.append("\n— Общее количество товаров: ");
+            builder.append(doc.get("count"));
+            builder.append("\n— Средяя цена товара: ");
+            builder.append(doc.get("averagePrice"));
+
+            Document good = (Document) doc.get("minPriceGood");
+            if (good != null) {
+                builder.append("\n— Самый дешевый товар: ");
+                builder.append(good.get("name"));
+                builder.append(" - ");
+                builder.append(good.get("price"));
+            }
+
+            good = (Document) doc.get("maxPriceGood");
+            if (good != null) {
+                builder.append("\n— Самый дорогой товар: ");
+                builder.append(good.get("name"));
+                builder.append(" - ");
+                builder.append(good.get("price"));
+            }
+            for (int i = under100Doc.size() - 1; i >= 0; i--) {
+                Document shopDoc = under100Doc.get(i);
+                String currentShopName = (String) shopDoc.get("_id");
+                if (shopName.equals(currentShopName)) {
+                    builder.append("\n— Количество товаров, дешевле 100 рублей: ");
+                    builder.append(shopDoc.get("matchCount"));
+                    under100Doc.remove(i);
+                    break;
+                }
+            }
+        });
+        System.out.println(builder.toString());
+    }
+
     // Общее количество товаров по каждому магазину
     private void getGoodCountOfStore() {
         Bson unwind = unwind("$goods_in_store");
@@ -118,7 +181,7 @@ public class MongoStorage implements Closeable {
         Bson unwind = unwind("$fromGood");
         Bson group = group("$name", avg("averagePrice", "$fromGood.price"));
         List<Document> results = shopsCollection.aggregate(Arrays.asList(lookup, unwind, group)).into(new ArrayList<>());
-        results.forEach(doc -> System.out.printf("Магазин: \"%s\". Средняя цена: %s\n", doc.get("name"), doc.get("averagePrice")));
+        results.forEach(doc -> System.out.printf("Магазин: \"%s\". Средняя цена: %s\n", doc.get("_id"), doc.get("averagePrice")));
     }
 
     //Самый дешевый и дорогой товар в каждом магазине
@@ -142,7 +205,7 @@ public class MongoStorage implements Closeable {
             Document last = (Document) doc.get("max");
             if (last != null) {
                 String goodName = (String) last.get("name");
-                System.out.printf("Магазин: \"%s\". Самый дешевый товар: %s\n", doc.get("_id"), goodName);
+                System.out.printf("Магазин: \"%s\". Самый дорогой товар: %s\n", doc.get("_id"), goodName);
             }
         });
 
@@ -153,27 +216,13 @@ public class MongoStorage implements Closeable {
         Bson lookup = lookup("goods", "goods_in_store", "name", "fromGood");
         Bson unwind = unwind("$fromGood");
         Bson match = match(lt("fromGood.price", 100L));
-        Bson group = group("$name", sum("count", 1L));
+        Bson group = group("$name", sum("matchCount", 1L));
         List<Document> results = shopsCollection.aggregate(Arrays.asList(lookup, unwind, match, group)).into(new ArrayList<>());
-        results.forEach(doc -> System.out.printf("Магазин: \"%s\". Количество товаров дешевле 100 рублей: %s\n", doc.get("_id"), doc.get("count")));
+        results.forEach(doc -> System.out.printf("Магазин: \"%s\". Количество товаров дешевле 100 рублей: %s\n", doc.get("_id"), doc.get("matchCount")));
     }
 
     public void getStatistic() {
-        //для каждого магазина
-        //— Общее количество товаров
-        getGoodCountOfStore();
-        //— Среднюю цену товара
-//        FindIterable<Document> result = collection.aggregate(Arrays.asList(lookup("goods", "goods_in_store", "name", "fromGood"), unwind("$fromGood"), group("$name", avg("averagePrice", "$fromGood.price"))));
-        getGoodAvgOfStore();
-
-        getGoodMaxOfStore();
-//            — Самый дорогой и самый дешевый товар
-//дорогой
-// FindIterable<Document> result = collection.aggregate(Arrays.asList(lookup("goods", "goods_in_store", "name", "fromGood"), unwind("$fromGood"), sort(descending("fromGood.price")), group("$name", first("first", "$fromGood"))));
-
-        //— Количество товаров, дешевле 100 рублей.
-//        FindIterable<Document> result = collection.aggregate(Arrays.asList(lookup("goods", "goods_in_store", "name", "fromGood"), unwind("$fromGood"), match(lt("fromGood.price", 100L)), group("$name", sum("count", 1L))));
-        getGoodsLess100OfStore();
+        getAllStaticFacet();
     }
 
     public void close() {
