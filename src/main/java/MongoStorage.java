@@ -64,43 +64,44 @@ public class MongoStorage implements Closeable {
 
     }
 
-    public void addShop(String name) {
+    boolean addShop(String name) {
         Bson filter = eq("name", name);
         Document shop = shopsCollection.find(filter).first();
         if (shop != null) {
-            return;
+            return false;
         }
         shop = new Document()
                 .append("name", name)
                 .append("goods_in_store", asList());
 
         shopsCollection.insertOne(shop);
+        return true;
     }
 
-    public void addGood(String name, int price) {
+    boolean addGood(String name, int price) {
         Bson filter = eq("name", name);
-        Document good = shopsCollection.find(filter).first();
+        Document good = goodsCollection.find(filter).first();
         if (good != null) {
-            return;
+            return false;
         }
         good = new Document()
                 .append("name", name)
                 .append("price", price);
         goodsCollection.insertOne(good);
+        return true;
     }
 
-    public void addGood2Shop(String goodName, String shopName) {
-        Bson filter = eq("name", shopName);
+    boolean addGood2Shop(String goodName, String shopName) {
+        Bson filter = eq("name", goodName);
+        Document good = goodsCollection.find(filter).first();
+        if (good == null) {
+            return false;
+        }
+
+        filter = eq("name", shopName);
         Bson updateGoods = Updates.addToSet("goods_in_store", goodName);
         Document shop = shopsCollection.findOneAndUpdate(filter, updateGoods);
-    }
-
-    public void printAllShops() {
-        FindIterable<Document> iterable = shopsCollection.find();
-        MongoCursor<Document> cursor = iterable.iterator();
-        while (cursor.hasNext()) {
-            System.out.println(cursor.next().toJson());
-        }
+        return true;
     }
 
     //все по магазинам
@@ -221,7 +222,7 @@ public class MongoStorage implements Closeable {
         results.forEach(doc -> System.out.printf("Магазин: \"%s\". Количество товаров дешевле 100 рублей: %s\n", doc.get("_id"), doc.get("matchCount")));
     }
 
-    public void getStatistic() {
+    void getStatistic() {
         getAllStaticFacet();
     }
 

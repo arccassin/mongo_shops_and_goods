@@ -13,7 +13,7 @@ public class TestMongoStorage {
             FileInputStream inputStream =
                     null;
             try {
-                inputStream = new FileInputStream("src\\test\\resoursces\\TestCommand.txt");
+                inputStream = new FileInputStream("src\\test\\resoursces\\TestCommand2.txt");
             } catch (FileNotFoundException e) {
                 e.printStackTrace();
             }
